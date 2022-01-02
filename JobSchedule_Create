@@ -1,0 +1,118 @@
+SET QUOTED_IDENTIFIER ON
+SET ANSI_NULLS ON
+GO
+--==============================================
+-- Date : 1400/08/28 12:11:1
+-- Programmer : Shahin Nasseri
+-- Description : Create Job -- ایجاد زمان بندی
+--==============================================
+ALTER   PROCEDURE [Scr].[S_JobSchedule_Create]
+    @JobName NVARCHAR(200) = NULL,
+    @JobCommand NVARCHAR(MAX) = NULL,
+    @ServerName NVARCHAR(200) = NULL,
+    @Freq_type INT = NULL,          -- (1 = Once) , (4 = Daily) , (8 = Weekly) , (16 = Monthly)
+    @StartDate NVARCHAR(10) = NULL, -- Default is Today
+    @StartTime NVARCHAR(10) = NULL, -- Default is 00:00:00
+    @ErrorCode INT = NULL OUTPUT,
+    @ErrorMessage NVARCHAR(500) = NULL OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    --=======================================Validate Inputs==========================================
+
+    IF NULLIF(@JobName, '') IS NULL
+    BEGIN
+        SET @ErrorCode = 1;
+        SET @ErrorMessage = N'لطفا مقدار JobName را وارد کنید';
+        RETURN 0;
+    END;
+
+    IF NULLIF(@JobCommand, '') IS NULL
+    BEGIN
+        SET @ErrorCode = 1;
+        SET @ErrorMessage = N'لطفا مقدار @JobCommand را وارد کنید';
+        RETURN 0;
+    END;
+
+    --=====================================Fill Default Value======================================
+
+    IF NULLIF(@ServerName, '') IS NULL
+    BEGIN
+        SET @ServerName = @@SERVERNAME; --It Will Work if Server Is local
+    END;
+
+    IF NULLIF(@StartDate, '') IS NULL
+    BEGIN
+        SET @StartDate = CONVERT(NVARCHAR(200), GETDATE(), 12); --// Result Will Be Like 210105 --Note : 20 is Missed So We Will Add 20 in Next Line
+        SET @StartDate = '20' + @StartDate;
+    END;
+
+    IF NULLIF(@StartTime, '') IS NULL
+    BEGIN
+        SET @StartTime = '000000'; -- Set 00:00:00 
+    END;
+
+    IF @Freq_type IS NULL
+    BEGIN
+        SET @Freq_type = 1; -- Means Execute Once
+    END;
+
+    SET @JobName = CONCAT(DB_NAME(), '-', 'CreatedBySP', '-', @JobName);
+
+    SET @ErrorCode = 0;
+    SET @ErrorMessage = N'عملیات با موفقیت انجام شد';
+
+    --==============================================Declare Variables========================================
+
+    DECLARE @JobId BINARY(16);
+
+    --=============================================Delete Job If Exist=======================================
+
+    SELECT @JobId = job_id
+    FROM msdb.dbo.sysjobs
+    WHERE (name = @JobName);
+    IF (@JobId IS NOT NULL)
+    BEGIN
+        EXEC msdb.dbo.sp_delete_job @JobId;
+    END;
+
+    --==============================================Main Code===========================================
+    BEGIN TRY
+        --Add A Job
+        EXEC msdb.dbo.sp_add_job @job_name = @JobName;
+
+
+        --Add a Job Step Named Process_Step1. This Step Runs The @JobCommand
+        EXEC msdb.dbo.sp_add_jobstep @job_name = @JobName,
+                                     @step_name = N'Process_Step1',
+                                     @subsystem = N'TSQL',
+                                     @command = @JobCommand;
+
+
+									 
+        --Schedule The Job At A Specified Date And Time
+        EXEC msdb.dbo.sp_add_jobschedule @job_name = @JobName,
+                                         @name = 'MySchedule',
+                                         @freq_type = @Freq_type,
+										 @freq_interval = 1,
+                                         @active_start_date = @StartDate,
+                                         @active_start_time = @StartTime;
+
+
+        -- Add The Job To The SQL Server 
+        EXEC msdb.dbo.sp_add_jobserver @job_name = @JobName,
+                                       @server_name = @ServerName;
+
+		-- Start The Job
+        EXEC msdb.dbo.sp_start_job @job_name = @JobName;
+
+    END TRY
+    BEGIN CATCH
+        SET @ErrorCode = -1;
+        SET @ErrorMessage = ERROR_MESSAGE();
+    END CATCH;
+
+END;
+GO
+

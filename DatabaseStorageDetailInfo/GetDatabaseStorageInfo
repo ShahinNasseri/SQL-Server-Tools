@@ -1,0 +1,41 @@
+
+-- =============================================
+-- Author:		Shahin Nasseri
+-- Create date: 1400/08/27
+-- Description:	Get Databae StoreManagment Detail
+-- =============================================
+ALTER PROCEDURE [Scr].[S_Database_Detail]
+AS
+BEGIN
+    -- SET NOCOUNT ON added to prevent extra result sets from
+    -- interfering with SELECT statements.
+    SET NOCOUNT ON;
+
+    DECLARE @DRIVE TABLE
+    (
+        DRIVENAME CHAR,
+        FREESPACEINMEGABYTES INT
+    );
+
+    INSERT @DRIVE
+    EXECUTE xp_fixeddrives;
+
+    SELECT CASE
+               WHEN MAS.[type_desc] = 'Rows' THEN
+                   'Database'
+               WHEN MAS.[type_desc] = 'Log' THEN
+                   'Database_Log'
+               ELSE
+                   MAS.[type_desc]
+           END [FileType],
+           MAS.[name] [FileName],
+           MAS.[physical_name] [PhysicalFileName],
+           FORMAT(((MAS.[size] * 8 / 1024) * 0.0009765625), '0.000') [FileSizeInGigabytes],
+           (MAS.[size] * 8 / 1024) [FileSizeInMegabytes],
+           DRV.[DRIVENAME],
+           FORMAT((DRV.[FREESPACEINMEGABYTES] * 0.0009765625), '0.000') [FreeSpaceInGigabytes]
+    FROM sys.master_files MAS
+        LEFT JOIN @DRIVE DRV
+            ON LEFT(MAS.physical_name, 1) = DRV.[DRIVENAME]
+    WHERE database_id = DB_ID(DB_NAME());
+END;

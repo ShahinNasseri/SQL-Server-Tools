@@ -1,0 +1,145 @@
+﻿SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+--==============================================
+-- Date        : 1400/9/10 21:53:49
+-- Programmer  : Shahin Nasseri
+-- Description : Save Email Config
+--==============================================
+
+ALTER PROCEDURE Scr.S_EmailSettings_Save
+    @EmailAddress NVARCHAR(300) = NULL,    -- 'youremail@gmail.com'
+    @Display_name NVARCHAR(300) = NULL,    -- 'Shahin Khan'
+    @Mailserver_name NVARCHAR(300) = NULL, -- 'smtp.gmail.com'
+    @Password NVARCHAR(300) = NULL,        -- 'GMAIL PASSWORD'
+    @Port INT = NULL,                      -- 587
+    @Enable_ssl BIT = NULL,                -- 1
+    @UseDefaultCredentials BIT = NULL,
+    @MailServerType NVARCHAR(300) = NULL,
+    @ErrorCode INT = NULL OUTPUT,
+    @ErrorMessage NVARCHAR(500) = NULL OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    --=====================================  Variable Defining ========================================
+
+    DECLARE @AccessCodeEnName NVARCHAR(100),
+            @ValidEvent BIT = 1,
+            @DataBeforEvent NVARCHAR(MAX),
+            @ProfileName NVARCHAR(500),
+            @AccountName NVARCHAR(500),
+            @EmailSettingsId INT,
+            @BeginTranInThisSp BIT = 0;
+
+    SET @ErrorCode = 0;
+    SET @ErrorMessage = N'عملیات با موفقیت انجام شد';
+
+    SET @AccountName = CONCAT(DB_NAME(), 'Mail');
+    SET @ProfileName = CONCAT(DB_NAME(), 'Mail', '_Profile');
+
+    --================================ Check Necessary Parameters ================================
+
+    IF NULLIF(@EmailAddress, '') IS NULL
+       OR NULLIF(@Display_name, '') IS NULL
+       OR NULLIF(@Mailserver_name, '') IS NULL
+       OR NULLIF(@Password, '') IS NULL
+       OR NULLIF(@MailServerType, '') IS NULL
+       OR @Port IS NULL
+       OR @Enable_ssl IS NULL
+    BEGIN
+        SET @ErrorCode = 1;
+        SET @ErrorMessage = N'لطفا تمامی پارامتر های الزامی را وارد کنید';
+        GOTO SaveEventLog;
+    END;
+
+    --==========================================================================================
+
+    IF @@TRANCOUNT = 0
+    BEGIN
+        SET @BeginTranInThisSp = 1;
+        BEGIN TRAN Tarn_EmailSettings_Save;
+    END;
+
+    IF EXISTS
+    (
+        SELECT TOP (1)
+               1
+        FROM msdb.dbo.sysmail_account
+        WHERE name = @AccountName
+    )
+    BEGIN
+        SELECT TOP (1)
+               @EmailSettingsId = SA.account_id
+        FROM msdb.dbo.sysmail_account SA
+        WHERE SA.name = @AccountName;
+    END;
+
+
+    --=================================== Main ==================================
+
+    BEGIN TRY
+        IF @EmailSettingsId IS NULL
+        BEGIN
+
+            EXEC msdb.dbo.sysmail_add_account_sp @account_name = @AccountName,
+                                                 @description = 'Send emails using SQL Server Stored Procedure',
+                                                 @email_address = @EmailAddress,
+                                                 @display_name = @Display_name,
+                                                 @replyto_address = @EmailAddress,
+                                                 @mailserver_name = @Mailserver_name,
+                                                 @username = @EmailAddress,
+                                                 @password = @Password,
+                                                 @use_default_credentials = @UseDefaultCredentials,
+                                                 @mailserver_type = @MailServerType,
+                                                 @port = @Port,
+                                                 @enable_ssl = @Enable_ssl;
+
+            EXEC msdb.dbo.sysmail_add_profile_sp @profile_name = @ProfileName,
+                                                 @description = 'Send emails using SQL Server Stored Procedure';
+
+
+            EXEC msdb.dbo.sysmail_add_profileaccount_sp @profile_name = @ProfileName,
+                                                        @account_name = @AccountName,
+                                                        @sequence_number = 1;
+
+
+
+        END;
+        ELSE
+        BEGIN
+            SET @DataBeforEvent =
+            (
+                SELECT *
+                FROM msdb.dbo.sysmail_account
+                WHERE account_id = @EmailSettingsId
+                FOR JSON PATH
+            );
+
+            EXEC msdb.dbo.sysmail_update_account_sp @account_id = @EmailSettingsId,                    -- int
+                                                    @email_address = @EmailAddress,                    -- nvarchar(128)
+                                                    @display_name = @Display_name,                     -- nvarchar(128)
+                                                    @replyto_address = @EmailAddress,                  -- nvarchar(128)
+                                                    @mailserver_name = @Mailserver_name,               -- sysname
+                                                    @port = @Port,                                     -- int
+                                                    @username = @EmailAddress,                         -- sysname
+                                                    @password = @Password,
+                                                    @mailserver_type = @MailServerType,
+                                                    @use_default_credentials = @UseDefaultCredentials, -- sysname
+                                                    @enable_ssl = @Enable_ssl;                         -- bit
+
+        END;
+
+        IF @BeginTranInThisSp = 1
+            COMMIT TRAN Tarn_EmailSettings_Save;
+    END TRY
+    BEGIN CATCH
+        IF @BeginTranInThisSp = 1
+            ROLLBACK TRAN Tarn_EmailSettings_Save;
+        SET @ErrorCode = -1;
+        SET @ErrorMessage = ERROR_MESSAGE();
+    END CATCH;
+
+END;
+GO
+

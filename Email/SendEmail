@@ -1,0 +1,78 @@
+﻿--==============================================
+-- Date        : 1400/9/10 21:53:49
+-- Programmer  : Shahin Nasseri
+-- Description : Send Email
+--==============================================
+CREATE OR ALTER PROCEDURE [Scr].[S_Email_Send]
+    @Recipients NVARCHAR(200),
+    @Subject NVARCHAR(300),
+    @Body NVARCHAR(MAX),
+    @ErrorCode INT = NULL OUTPUT,
+    @ErrorMessage NVARCHAR(500) = NULL OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    --=====================================  Variable Defining ========================================
+    DECLARE @mailitem_id INT,
+            @ProfileName NVARCHAR(500),
+			@AccountName NVARCHAR(500);
+
+    SET @ErrorCode = 0;
+    SET @ErrorMessage = N'عملیات با موفقیت انجام شد';
+
+    SET @ProfileName = CONCAT(DB_NAME(), 'Mail', '_Profile');
+		SET @AccountName = CONCAT(DB_NAME() ,'Mail');
+		SET @ProfileName = CONCAT(DB_NAME() ,'Mail' , '_Profile');
+
+    --================================ Check Necessary Parameters ================================
+
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM msdb.dbo.sysmail_account SA
+        WHERE SA.name = @AccountName
+    )
+    BEGIN
+        SET @ErrorCode = 1;
+        SET @ErrorMessage = N'ایمیلی برای کانفیگ ست نشده است';
+        RETURN 0;
+    END;
+
+
+    IF NULLIF(@Recipients, '') IS NULL
+       OR NULLIF(@Body, '') IS NULL
+    BEGIN
+        SET @ErrorCode = 1;
+        SET @ErrorMessage = N'لطفا تمامی پارامتر های الزامی را وارد کنید';
+        RETURN 0;
+    END;
+
+    SET @Recipients = REPLACE(@Recipients, ',', ';');
+
+    --================================ Main ================================
+
+    EXEC msdb.dbo.sp_send_dbmail @profile_name = @ProfileName,
+                                 @recipients = @Recipients,
+                                 @subject = @Subject,
+                                 @body = @Body,
+                                 @mailitem_id = @mailitem_id,
+                                 @importance = 'HIGH';
+
+
+--Blow Block Code Will SHow UnSentEmails
+
+
+--  SELECT * FROM msdb.dbo.sysmail_sentitems
+--  SELECT * FROM msdb.dbo.sysmail_unsentitems SU
+
+--   SELECT mailitem_id
+--    ,[subject]
+--    ,[last_mod_date]
+--    ,(SELECT TOP 1 [description]
+--            FROM msdb.dbo.sysmail_event_log
+--            WHERE mailitem_id = logs.mailitem_id
+--            ORDER BY log_date DESC) [description]
+--FROM msdb.dbo.sysmail_faileditems logs
+END;
+GO
+

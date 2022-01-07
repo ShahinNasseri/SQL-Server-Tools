@@ -1,0 +1,161 @@
+--Example
+--EXEC Gnr.S_TableRecord_CascadeDelete @ParentTableId = 'Sec.User'
+--                                   , @WhereClause = 'User.Id = 1';
+
+IF Object_Id ('Gnr.F_GetFullQualName') IS NOT NULL
+    DROP FUNCTION Gnr.F_GetFullQualName;
+GO
+CREATE FUNCTION Gnr.F_GetFullQualName (
+                                          @ObjectId INT
+                                      )
+RETURNS VARCHAR(300)
+AS
+BEGIN
+    -- This Function Will Be Use In Gnr.S_TableRecord_CascadeDelete 
+    DECLARE @Schema_Id AS BIGINT;
+    SELECT @Schema_Id = Schema_Id
+    FROM   sys.tables
+    WHERE  Object_Id = @ObjectId;
+    RETURN '[' + SCHEMA_NAME (@Schema_Id) + '].[' + OBJECT_NAME (@ObjectId) + ']';
+END;
+
+GO
+--============ Supporting Function Gnr.F_GetOnJoinClause
+IF Object_Id ('Gnr.F_GetOnJoinClause') IS NOT NULL
+    DROP FUNCTION Gnr.F_GetOnJoinClause;
+GO
+
+CREATE FUNCTION Gnr.F_GetOnJoinClause (
+                                          @FkNameId INT
+                                      )
+RETURNS VARCHAR(1000)
+AS
+BEGIN
+    -- This Function Will Be Use In Gnr.S_TableRecord_CascadeDelete 
+    DECLARE @OnClauseTemplate AS VARCHAR(1000);
+    SET @OnClauseTemplate = '[<@pTable>].[<@pCol>] = [<@cTable>].[<@cCol>] AND ';
+    DECLARE @Str AS VARCHAR(1000);
+    SET @Str = '';
+    SELECT @Str = @Str + REPLACE (REPLACE (REPLACE (REPLACE (@OnClauseTemplate, '<@pTable>', OBJECT_NAME (RkeyId)), '<@pCol>', COL_NAME (RkeyId, rkey)), '<@cTable>', OBJECT_NAME (FkeyId)), '<@cCol>', COL_NAME (FkeyId, fkey))
+    FROM   dbo.sysforeignkeys AS Fk
+    WHERE  Fk.ConstId = @FkNameId; --Object_Id('FK_ProductArrearsMe_ProductArrears')
+    RETURN LEFT(@Str, LEN (@Str) - LEN (' AND '));
+END;
+
+GO
+--=========== CASECADE DELETE STORED PROCEDURE Gnr.S_TableRecord_CascadeDelete
+IF Object_Id ('Gnr.S_TableRecord_CascadeDelete') IS NOT NULL
+    DROP PROCEDURE Gnr.S_TableRecord_CascadeDelete;
+
+GO
+
+--==============================================
+-- Date			: 1400/10/10 15:32
+-- Programmer	: Shahin Nasseri
+-- Description	: Cascade Delete ScriptGenerator 
+--==============================================
+CREATE PROCEDURE Gnr.S_TableRecord_CascadeDelete
+    @ParentTableId VARCHAR(300)
+  , @WhereClause VARCHAR(2000)
+  , @ExecuteDelete CHAR(1) = 'N' --'N' IF YOU NEED DELETE SCRIPT
+  , @FromClause VARCHAR(8000) = ''
+  , @Level INT = 0 -- TABLE NAME OR OBJECT (TABLE) ID (Production.Location) WHERE CLAUSE (Location.LocationID = 7) 'Y' IF WANT TO DELETE DIRECTLY FROM SP,  IF LEVEL 0, THEN KEEP DEFAULT
+AS
+BEGIN
+    --Example
+    --EXEC Gnr.S_TableRecord_CascadeDelete @ParentTableId = 'Sec.User'
+    --                                   , @WhereClause = 'User.Id = 1';
+
+    --EXEC Gnr.S_Cascade_Delete @ParentTableId = 'Sec.User'
+    --                        , @WhereClause = 'User.Id = 1'
+    --                        , @ExecuteDelete = 'Y'; -- execute the delete (default is to print sql statements)
+
+    SET NOCOUNT ON;
+    /* Set up debug */
+    DECLARE @DebugMsg    AS VARCHAR(4000)
+          , @DebugIndent AS VARCHAR(50);
+    SET @DebugIndent = REPLICATE ('---', @@NESTLEVEL) + '> ';
+    IF ISNUMERIC (@ParentTableId) = 0
+    BEGIN -- Assume Owner Is dbo And Calculate Id
+        IF CHARINDEX ('.', @ParentTableId) = 0
+            SET @ParentTableId = Object_Id ('[dbo].[' + @ParentTableId + ']');
+        ELSE
+            SET @ParentTableId = Object_Id (@ParentTableId);
+    END;
+    IF @Level = 0
+    BEGIN
+        PRINT @DebugIndent + ' **************************************************************************';
+        PRINT @DebugIndent + ' *** Cascade Delete ALL Data From ' + Gnr.F_GetFullQualName (@ParentTableId);
+        IF @ExecuteDelete = 'Y'
+            PRINT @DebugIndent + ' *** @ExecuteDelete = Y *** Deleting Data...';
+        ELSE
+            PRINT @DebugIndent + ' *** Copy and Paste output into another window and execute ***';
+    END;
+    DECLARE @CRLF AS CHAR(2);
+    SET @CRLF = CHAR (13) + CHAR (10); -- Means Enter 
+    DECLARE @Sql AS VARCHAR(4000);
+    IF @Level = 0
+        SET @Sql = 'SET NOCOUNT ON' + @CRLF;
+    ELSE
+        SET @Sql = '';
+    SET @Sql = @Sql + 'PRINT ''' + @DebugIndent + Gnr.F_GetFullQualName (@ParentTableId) + ' Level=' + CAST(@@NESTLEVEL AS VARCHAR) + '''';
+    IF @ExecuteDelete = 'Y'
+        EXECUTE ( @Sql );
+    ELSE
+        PRINT @Sql;
+    DECLARE Cursor_Children CURSOR LOCAL FORWARD_ONLY FOR
+        SELECT DISTINCT ConstId AS FkNameId -- constraint name
+                      , FkeyId AS CTableId
+        FROM   dbo.sysforeignkeys AS Fk
+        WHERE  Fk.RkeyId <> Fk.FkeyId -- WE DO NOT HANDLE self referencing tables!!!
+               AND Fk.RkeyId = @ParentTableId;
+    OPEN Cursor_Children;
+    DECLARE @FkNameId AS INT
+          , @CTableId AS INT
+          , @CColId   AS INT
+          , @PTableId AS INT
+          , @PColId   AS INT;
+    FETCH NEXT FROM Cursor_Children
+    INTO @FkNameId
+       , @CTableId; --, @CColId, @PTableId, @PColId
+    DECLARE @StrFromClause AS VARCHAR(1000);
+    DECLARE @nLevel AS INT;
+    IF @Level = 0
+    BEGIN
+        SET @FromClause = 'FROM ' + Gnr.F_GetFullQualName (@ParentTableId);
+    END;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        SELECT @StrFromClause = @FromClause + @CRLF + '      INNER JOIN ' + Gnr.F_GetFullQualName (@CTableId) + @CRLF + '       ON ' + Gnr.F_GetOnJoinClause (@FkNameId);
+        SET @nLevel = @Level + 1;
+        EXECUTE Gnr.S_TableRecord_CascadeDelete @ParentTableId = @CTableId
+                                              , @WhereClause = @WhereClause
+                                              , @ExecuteDelete = @ExecuteDelete
+                                              , @FromClause = @StrFromClause
+                                              , @Level = @nLevel;
+        SET @Sql = 'DELETE FROM ' + Gnr.F_GetFullQualName (@CTableId) + @CRLF + @StrFromClause + @CRLF + 'WHERE   ' + @WhereClause + @CRLF;
+        SET @Sql = @Sql + 'PRINT ''---' + @DebugIndent + 'DELETE FROM ' + Gnr.F_GetFullQualName (@CTableId) + '     Rows Deleted: '' + CAST(@@ROWCOUNT AS VARCHAR)' + @CRLF + @CRLF;
+        IF @ExecuteDelete = 'Y'
+            EXECUTE ( @Sql );
+        ELSE
+            PRINT @Sql;
+        FETCH NEXT FROM Cursor_Children
+        INTO @FkNameId
+           , @CTableId;
+    END;
+    IF @Level = 0
+    BEGIN
+        SET @Sql = @CRLF + 'PRINT ''' + @DebugIndent + Gnr.F_GetFullQualName (@ParentTableId) + ' Level=' + CAST(@@NESTLEVEL AS VARCHAR) + ' TOP LEVEL PARENT TABLE''' + @CRLF;
+        SET @Sql = @Sql + 'DELETE FROM ' + Gnr.F_GetFullQualName (@ParentTableId) + ' WHERE ' + @WhereClause + @CRLF;
+        SET @Sql = @Sql + 'PRINT ''' + @DebugIndent + 'DELETE FROM ' + Gnr.F_GetFullQualName (@ParentTableId) + ' Rows Deleted: '' + CAST(@@ROWCOUNT AS VARCHAR)' + @CRLF;
+        IF @ExecuteDelete = 'Y'
+            EXECUTE ( @Sql );
+        ELSE
+            PRINT @Sql;
+    END;
+    CLOSE Cursor_Children;
+    DEALLOCATE Cursor_Children;
+END;
+
+
+

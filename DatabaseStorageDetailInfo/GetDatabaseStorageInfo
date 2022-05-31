@@ -36,6 +36,6 @@ BEGIN
            FORMAT((DRV.[FREESPACEINMEGABYTES] * 0.0009765625), '0.000') [FreeSpaceInGigabytes]
     FROM sys.master_files MAS
         LEFT JOIN @DRIVE DRV
-            ON LEFT(MAS.physical_name, 1) = DRV.[DRIVENAME]
+            ON LEFT(CAST(MAS.physical_name COLLATE SQL_Latin1_General_CP1_CI_AS AS CHAR(1)), 1) = DRV.[DRIVENAME]
     WHERE database_id = DB_ID(DB_NAME());
 END;
